@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no">
+	<title>Closest Facility Analysis</title>
+	
+	<!--ArcGIS API-->
+	<link rel="stylesheet" href="https://js.arcgis.com/4.13/esri/themes/light/main.css">
+	<script src="https://js.arcgis.com/4.13/"></script>
+	
+    <style>
+      html, body,#viewDiv{
+        padding: 0;
+        margin: 0;
+        height: 100%;
+		width: 100%;
+      }
+    </style>
+
+	<script>
+	  require([
+		"esri/Map",
+		"esri/views/MapView",
+		"esri/layers/FeatureLayer",
+		"esri/layers/GroupLayer",
+		"esri/widgets/LayerList",
+        "esri/popup/FieldInfo"
+	  ],function(Map,MapView,FeatureLayer,GroupLayer,LayerList,FieldInfo){ 
+					
+		var incampus = new FeatureLayer({
+			title: "校園內車道",
+			url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/roadincampus/FeatureServer"
+		});
+		var offcampus = new FeatureLayer({
+			title: "校園外車道",
+			url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/roadoffcampus/FeatureServer"
+		});
+		var campus = new FeatureLayer({
+			title: "校園",
+			url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%9C%8B%E7%AB%8B%E6%88%90%E5%8A%9F%E5%A4%A7%E5%AD%B8%E6%A0%A1%E5%8D%80_wen/FeatureServer"
+		});
+					
+		var ncku = new GroupLayer({
+		  title: "NCKU road",
+		  visible: true,
+		  visibilityMode: "exclusive", //只能開啟一圖層
+		  layers: [campus, incampus, offcampus],
+		  opacity: 0.75
+		});
+		
+		//map要放在layer後面
+		var map = new Map({
+		  basemap:"streets-relief-vector",
+		  layers: [ncku]
+		});
+		
+		var view = new MapView({
+		  container: "viewDiv",
+          map: map,
+		  center: [120.219312,22.997535],
+		  zoom: 15
+		});
+		
+        var template = {
+          // autocasts as new PopupTemplate()
+          title: "{BLOCKNAME} ",
+          content: [
+            {
+              type: "fields",
+              fieldInfos: [
+                {
+                  fieldName: "BLOCKNAME",
+                  label: "校區名"
+                }
+              ]
+            }
+          ]
+       };
+       campus.popupTemplate = template;
+
+		//LayerList: 控制圖層之元件
+        function controlActions(event) {
+          var item = event.item;
+
+          if (item.title === "NCKU road") {
+            item.actionsSections = [
+              [
+                {
+                  title: "Go to full extent",
+                  className: "esri-icon-zoom-out-fixed",
+                  id: "full-extent"
+                },
+                {
+                  title: "Layer information",
+                  className: "esri-icon-description",
+                  id: "information"
+                }
+              ]
+            ];
+          }
+        }
+
+        view.when(function() {
+          var layerList = new LayerList({
+            view: view,
+            listItemCreatedFunction: controlActions
+          });
+
+          layerList.on("trigger-action", function(event) {
+            
+            //**變數 = (條件式) ? { 成立 } : { 不成立 };
+			var visibleLayer = incampus.visible ? incampus : offcampus;
+            var id = event.action.id;
+
+            if (id === "full-extent") {
+              view.goTo(visibleLayer.fullExtent);
+            } else if (id === "information") {
+              window.open(visibleLayer.url);
+            } else if (id === "increase-opacity") {
+              if (ncku.opacity < 1) {
+                ncku.opacity += 0.25;
+              }
+            } else if (id === "decrease-opacity") {
+              if (ncku.opacity > 0) {
+                ncku.opacity -= 0.25;
+              }
+            }
+          });
+
+          // Add widget to the top right corner of the view
+          view.ui.add(layerList, "top-right");
+        });		
+						
+	  });
+	</script>
+  </head>
+  
+  <body>
+	<div id="viewDiv"></div>
+  </body>
+</html>
