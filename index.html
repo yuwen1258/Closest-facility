@@ -6,8 +6,8 @@
 	<title>Closest Facility Analysis</title>
 	
 	<!--ArcGIS API-->
-	<link rel="stylesheet" href="https://js.arcgis.com/4.13/esri/themes/light/main.css">
-	<script src="https://js.arcgis.com/4.13/"></script>
+	<link rel="stylesheet" href="https://js.arcgis.com/4.22/esri/themes/light/main.css">
+	<script src="https://js.arcgis.com/4.24/"></script>
 	
     <style>
       html, body,#viewDiv{
@@ -20,117 +20,429 @@
 
 	<script>
 	  require([
-		"esri/Map",
-		"esri/views/MapView",
-		"esri/layers/FeatureLayer",
-		"esri/layers/GroupLayer",
-		"esri/widgets/LayerList",
-        "esri/popup/FieldInfo"
-	  ],function(Map,MapView,FeatureLayer,GroupLayer,LayerList,FieldInfo){ 
-					
-		var incampus = new FeatureLayer({
-			title: "校園內車道",
-			url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/roadincampus/FeatureServer"
-		});
-		var offcampus = new FeatureLayer({
-			title: "校園外車道",
-			url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/roadoffcampus/FeatureServer"
-		});
-		var campus = new FeatureLayer({
-			title: "校園",
-			url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%9C%8B%E7%AB%8B%E6%88%90%E5%8A%9F%E5%A4%A7%E5%AD%B8%E6%A0%A1%E5%8D%80_wen/FeatureServer"
-		});
-					
-		var ncku = new GroupLayer({
-		  title: "NCKU road",
-		  visible: true,
-		  visibilityMode: "exclusive", //只能開啟一圖層
-		  layers: [campus, incampus, offcampus],
-		  opacity: 0.75
-		});
-		
-		//map要放在layer後面
-		var map = new Map({
-		  basemap:"streets-relief-vector",
-		  layers: [ncku]
-		});
-		
-		var view = new MapView({
-		  container: "viewDiv",
-          map: map,
-		  center: [120.219312,22.997535],
-		  zoom: 15
-		});
-		
-        var template = {
-          // autocasts as new PopupTemplate()
-          title: "{BLOCKNAME} ",
-          content: [
-            {
-              type: "fields",
-              fieldInfos: [
-                {
-                  fieldName: "BLOCKNAME",
-                  label: "校區名"
-                }
-              ]
-            }
-          ]
-       };
-       campus.popupTemplate = template;
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/layers/FeatureLayer",
+        "esri/widgets/Expand",
+        "esri/widgets/Legend",
+        "esri/core/watchUtils",
 
-		//LayerList: 控制圖層之元件
-        function controlActions(event) {
-          var item = event.item;
+        "esri/layers/GroupLayer",
+		    "esri/widgets/LayerList",
+        "esri/popup/FieldInfo",
+        "esri/layers/TileLayer"
+	  ],function(
+        Map,
+        MapView,
+        FeatureLayer,
+        Expand,
+        Legend,
+        watchUtils,
+        GroupLayer, LayerList, FieldInfo, TileLayer){ 
 
-          if (item.title === "NCKU road") {
-            item.actionsSections = [
-              [
+      var EX_template = {
+        // autocasts as new PopupTemplate()
+        outFields: ["*"],
+        title: "距離第 {FacilityRank} 近滅火器",
+        content:"行走 {Total_Walking_time} 分鐘可到達",
+        fieldInfos: [
+              {
+                fieldName: "Total_Walking_time",
+              }
+            ]
+      };
+      var EX_template2 = {
+        // autocasts as new PopupTemplate()
+        outFields: ["*"],
+        title: "距離第 {FacilityRa} 近滅火器",
+        content:"行走 {Total_Walk} 分鐘可到達",
+        fieldInfos: [
+              {
+                fieldName: "Total_Walk",
+              }
+            ]
+      };
+
+      var HY_template = {
+        // autocasts as new PopupTemplate()
+        outFields: ["*"],
+        title: "距離第 {FacilityRa} 近消防栓",
+        content:"行走 {Total_Walk} 分鐘可到達",
+        fieldInfos: [
+              {
+                fieldName: "Total_Walk",
+                format: {
+                  places: 2,
+                  digitSeparator: false
+                },
+                
+              }
+            ]
+      };
+
+      var facility_template = {
+        // autocasts as new PopupTemplate()
+        outFields: ["*"],
+        title: "防災設施：{name}"
+      };
+
+      var building_template = {
+        // autocasts as new PopupTemplate()
+        outFields: ["*"],
+        title: "防災設施：{name}"
+      };
+					
+		  // 建物、防災設施、核密度
+      var building = new FeatureLayer({
+			  title: "力行校區建物",
+			  url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/9310100%E6%B0%B8%E4%B9%85%E6%80%A7%E6%88%BF%E5%B1%8B_forHTML/FeatureServer"
+		  });
+      var facility = new FeatureLayer({
+        title: "防災設施",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E9%98%B2%E7%81%BD%E8%A8%AD%E6%96%BD/FeatureServer"
+      });
+      facility.popupTemplate = facility_template;
+      var kernel = new TileLayer({
+        // URL points to a cached tiled map service hosted on ArcGIS Server
+        title:"防災設施核密度圖",
+        url: "https://tiles.arcgis.com/tiles/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E9%98%B2%E7%81%BD%E8%A8%AD%E6%96%BD%E6%A0%B8%E5%AF%86%E5%BA%A6/MapServer"
+      });
+
+      // ------------------------------------------滅火器-----------------------------------------------------
+      var shelter_EX = new FeatureLayer({
+        title: "防空洞",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E9%98%B2%E7%A9%BA%E6%B4%9E_EX/FeatureServer"
+      });
+      shelter_EX.popupTemplate = EX_template;
+      var social_EX = new FeatureLayer({
+        title: "社科院",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E7%A4%BE%E7%A7%91%E9%99%A2_EX/FeatureServer"
+      });
+      social_EX.popupTemplate = EX_template;
+      var heart_EX = new FeatureLayer({
+        title: "心臟科學研究中心",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%BF%83%E8%87%9F%E7%A7%91%E5%AD%B8_EX/FeatureServer"
+      });
+      heart_EX.popupTemplate = EX_template;
+      var green_EX = new FeatureLayer({
+        title: "孫運璿綠建築魔法大樓",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E7%B6%A0%E8%89%B2%E9%AD%94%E6%B3%95_EX/FeatureServer"
+      });
+      green_EX.popupTemplate = EX_template2;
+      var police_EX = new FeatureLayer({
+        title: "警衛室",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%AD%A6%E8%A1%9B%E5%AE%A4_EX/FeatureServer"
+      });
+      police_EX.popupTemplate = EX_template2;
+      var wave_EX = new FeatureLayer({
+        title: "震波實驗室",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E9%9C%87%E6%B3%A2%E5%AF%A6%E9%A9%97%E5%AE%A4_EX/FeatureServer"
+      });
+      wave_EX.popupTemplate = EX_template2;
+      var public_health_EX = new FeatureLayer({
+        title: "舊公衛所",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%88%8A%E5%85%AC%E8%A1%9B%E6%89%80_EX/FeatureServer"
+      });
+      public_health_EX.popupTemplate = EX_template2;
+      var warehouse_EX = new FeatureLayer({
+        title: "考古所(工友班倉庫)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%B7%A5%E5%8F%8B%E7%8F%AD%E5%80%89%E5%BA%AB_EX/FeatureServer"
+      });
+      warehouse_EX.popupTemplate = EX_template2;
+      var janitor_EX = new FeatureLayer({
+        title: "工友班",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%B7%A5%E5%8F%8B%E7%8F%AD_EX/FeatureServer"
+      });
+      janitor_EX.popupTemplate = EX_template2;
+      var archive_EX = new FeatureLayer({
+        title: "考古所(博物館典藏室)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%80%83%E5%8F%A4%E5%85%B8%E8%97%8F%E5%AE%A4_EX/FeatureServer"
+      });
+      archive_EX.popupTemplate = EX_template2;
+      var PCRC_EX = new FeatureLayer({
+        title: "公共工程中心",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%85%AC%E5%85%B1%E5%B7%A5%E7%A8%8B%E4%B8%AD%E5%BF%83_EX/FeatureServer"
+      });
+      PCRC_EX.popupTemplate = EX_template2;
+      var north_EX = new FeatureLayer({
+        title: "公共工程中心(北面建物)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%8C%97%E9%9D%A2%E5%BB%BA%E7%89%A9_EX/FeatureServer"
+      });
+      north_EX.popupTemplate = EX_template2;
+      var recycle_EX = new FeatureLayer({
+        title: "事務組資源回收場",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%9B%9E%E6%94%B6%E5%A0%B4_EX/FeatureServer"
+      });
+      recycle_EX.popupTemplate = EX_template2;
+      var recy_warehouse_EX = new FeatureLayer({
+        title: "事務組倉庫",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E4%BA%8B%E5%8B%99%E7%B5%84%E5%80%89%E5%BA%AB_EX/FeatureServer"
+      });
+      recy_warehouse_EX.popupTemplate = EX_template2;
+      var biological_EX = new FeatureLayer({
+        title: "生科院",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E7%94%9F%E7%A7%91%E9%99%A2_EX/FeatureServer"
+      });
+      biological_EX.popupTemplate = EX_template2;
+      var toilet_EX = new FeatureLayer({
+        title: "臺文系廁所",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%BB%81%E6%89%80_EX/FeatureServer"
+      });
+      toilet_EX.popupTemplate = EX_template2;
+      var TWL012_EX = new FeatureLayer({
+        title: "臺文系(原軍方兵舍012)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%85%B5%E8%88%8D012_EX/FeatureServer"
+      });
+      TWL012_EX.popupTemplate = EX_template2;
+      var TWL015_EX = new FeatureLayer({
+        title: "臺文系(原軍方醫療室015)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E9%86%AB%E7%99%82%E5%AE%A4015_EX/FeatureServer"
+      });
+      TWL015_EX.popupTemplate = EX_template2;
+      var TWL025_EX = new FeatureLayer({
+        title: "臺文系(原軍方醫療室025)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E9%86%AB%E7%99%82%E5%AE%A4025_EX/FeatureServer"
+      });
+      TWL025_EX.popupTemplate = EX_template2;
+      var TWL030_EX = new FeatureLayer({
+        title: "臺文系(原軍方兵舍030)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%85%B5%E8%88%8D030_EX/FeatureServer"
+      });
+      TWL030_EX.popupTemplate = EX_template2;
+      var TWL037_EX = new FeatureLayer({
+        title: "臺文系(原軍方教室037)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E6%95%99%E5%AE%A4037_EX/FeatureServer"
+      });
+      TWL037_EX.popupTemplate = EX_template2;
+      var TWL042_EX = new FeatureLayer({
+        title: "臺文系(原軍方兵舍042)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%85%B5%E8%88%8D042_EX/FeatureServer"
+      });
+      TWL042_EX.popupTemplate = EX_template2;
+      var TWL048_EX = new FeatureLayer({
+        title: "臺文系(原軍方辦公室048)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E8%BE%A6%E5%85%AC%E5%AE%A4048_EX/FeatureServer"
+      });
+      TWL048_EX.popupTemplate = EX_template2;
+      var TWL035_EX = new FeatureLayer({
+        title: "臺文系(原軍方中山室035)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E4%B8%AD%E5%B1%B1%E5%AE%A4035_EX/FeatureServer"
+      });
+      TWL035_EX.popupTemplate = EX_template2;
+
+      var fire_EX = new GroupLayer({
+        title: "最鄰近滅火器",
+        visible: false,
+        visibilityMode: "exclusive", //只能開啟一圖層
+        layers: [ shelter_EX, social_EX, heart_EX, green_EX, wave_EX, public_health_EX, warehouse_EX,
+                  janitor_EX, archive_EX, PCRC_EX, north_EX, recycle_EX, recy_warehouse_EX, biological_EX, toilet_EX,
+                  TWL012_EX, TWL015_EX, TWL025_EX, TWL030_EX, TWL037_EX, TWL042_EX, TWL048_EX, TWL035_EX,
+                  police_EX],
+        opacity: 0.75
+      });
+      // ------------------------------------------滅火器-----------------------------------------------------
+
+      // ------------------------------------------消防栓-----------------------------------------------------
+      var shelter_HY = new FeatureLayer({
+        title: "防空洞",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E9%98%B2%E7%A9%BA%E6%B4%9E_HY/FeatureServer"
+      });
+      shelter_HY.popupTemplate = HY_template;
+      var social_HY = new FeatureLayer({
+        title: "社科院",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E7%A4%BE%E7%A7%91%E9%99%A2_HY/FeatureServer"
+      });
+      social_HY.popupTemplate = HY_template;
+      var heart_HY = new FeatureLayer({
+        title: "心臟科學研究中心",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%BF%83%E8%87%9F%E7%A7%91%E5%AD%B8_HY/FeatureServer"
+      });
+      heart_HY.popupTemplate = HY_template;
+      var green_HY = new FeatureLayer({
+        title: "孫瑞璿綠建築研究大樓",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E7%B6%A0%E8%89%B2%E9%AD%94%E6%B3%95_HY/FeatureServer"
+      });
+      green_HY.popupTemplate = HY_template;
+      var police_HY = new FeatureLayer({
+        title: "警衛室",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%AD%A6%E8%A1%9B%E5%AE%A4_HY/FeatureServer"
+      });
+      police_HY.popupTemplate = HY_template;
+      var wave_HY = new FeatureLayer({
+        title: "震波實驗室",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E9%9C%87%E6%B3%A2_HY/FeatureServer"
+      });
+      wave_HY.popupTemplate = HY_template;
+      var public_health_HY = new FeatureLayer({
+        title: "舊公衛所",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%88%8A%E5%85%AC%E8%A1%9B%E6%89%80_HY/FeatureServer"
+      });
+      public_health_HY.popupTemplate = HY_template;
+      var warehouse_HY = new FeatureLayer({
+        title: "考古所(工友班倉庫)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%B7%A5%E5%8F%8B%E7%8F%AD%E5%80%89%E5%BA%AB_HY/FeatureServer"
+      });
+      warehouse_HY.popupTemplate = HY_template;
+      var janitor_HY = new FeatureLayer({
+        title: "工友班",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%B7%A5%E5%8F%8B%E7%8F%AD_HY/FeatureServer"
+      });
+      janitor_HY.popupTemplate = HY_template;
+      var archive_HY = new FeatureLayer({
+        title: "考古所(博物館典藏室)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%80%83%E5%8F%A4%E5%85%B8%E8%97%8F%E5%AE%A4_HY/FeatureServer"
+      });
+      archive_HY.popupTemplate = HY_template;
+      var PCRC_HY = new FeatureLayer({
+        title: "公共工程中心",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%85%AC%E5%85%B1%E5%B7%A5%E7%A8%8B_HY/FeatureServer"
+      });
+      PCRC_HY.popupTemplate = HY_template;
+      var north_HY = new FeatureLayer({
+        title: "公共工程(北面建物)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%8C%97%E9%9D%A2%E5%BB%BA%E7%89%A9_HY/FeatureServer"
+      });
+      north_HY.popupTemplate = HY_template;
+      var recycle_HY = new FeatureLayer({
+        title: "事務組回收場",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E5%9B%9E%E6%94%B6%E5%A0%B4_HY/FeatureServer"
+      });
+      recycle_HY.popupTemplate = HY_template;
+      var recy_warehouse_HY = new FeatureLayer({
+        title: "事務組倉庫",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E4%BA%8B%E5%8B%99%E7%B5%84%E5%80%89%E5%BA%AB_HY/FeatureServer"
+      });
+      recy_warehouse_HY.popupTemplate = HY_template;
+      var biological_HY = new FeatureLayer({
+        title: "生科院",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E7%94%9F%E7%A7%91%E9%99%A2_HY/FeatureServer"
+      });
+      biological_HY.popupTemplate = HY_template;
+      var toilet_HY = new FeatureLayer({
+        title: "臺文系廁所",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%BB%81%E6%89%80_HY/FeatureServer"
+      });
+      toilet_HY.popupTemplate = HY_template;
+      var TWL012_HY = new FeatureLayer({
+        title: "臺文系(原軍方兵舍012)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%85%B5%E8%88%8D012_HY/FeatureServer"
+      });
+      TWL012_HY.popupTemplate = HY_template;
+      var TWL015_HY = new FeatureLayer({
+        title: "臺文系(原軍方醫療室015)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E9%86%AB%E7%99%82015_HY/FeatureServer"
+      });
+      TWL015_HY.popupTemplate = HY_template;
+      var TWL025_HY = new FeatureLayer({
+        title: "臺文系(原軍方醫療室025)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E9%86%AB%E7%99%82%E5%AE%A4025_HY/FeatureServer"
+      });
+      TWL025_HY.popupTemplate = HY_template;
+      var TWL030_HY = new FeatureLayer({
+        title: "臺文系(原軍方兵舍030)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%85%B5%E8%88%8D030_HY/FeatureServer"
+      });
+      TWL030_HY.popupTemplate = HY_template;
+      var TWL037_HY = new FeatureLayer({
+        title: "臺文系(原軍方教室037)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E6%95%99%E5%AE%A4037_HY/FeatureServer"
+      });
+      TWL037_HY.popupTemplate = HY_template;
+      var TWL042_HY = new FeatureLayer({
+        title: "臺文系(原軍方兵舍042)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E5%85%B5%E8%88%8D042_HY/FeatureServer"
+      });
+      TWL042_HY.popupTemplate = HY_template;
+      var TWL048_HY = new FeatureLayer({
+        title: "臺文系(原軍方辦公室048)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E8%BE%A6%E5%85%AC%E5%AE%A4048_HY/FeatureServer"
+      });
+      TWL048_HY.popupTemplate = HY_template;
+      var TWL035_HY = new FeatureLayer({
+        title: "臺文系(原軍方中山室035)",
+        url: "https://services5.arcgis.com/yqmzFsAzBUNEIWLw/arcgis/rest/services/%E8%87%BA%E6%96%87%E4%B8%AD%E5%B1%B1%E5%AE%A4035_HY/FeatureServer"
+      });
+      TWL035_HY.popupTemplate = HY_template;
+
+      var fire_HY = new GroupLayer({
+        title: "最鄰近消防栓",
+        visible: true,
+        visibilityMode: "exclusive", //只能開啟一圖層
+        layers: [ shelter_HY, social_HY, heart_HY, green_HY, wave_HY, public_health_HY, warehouse_HY,
+                  janitor_HY, archive_HY, PCRC_HY, north_HY, recycle_HY, recy_warehouse_HY, biological_HY,
+                  toilet_HY, TWL012_HY, TWL015_HY, TWL025_HY, TWL030_HY, TWL037_HY, TWL042_HY, TWL048_HY, TWL035_HY,
+                  police_HY],
+        opacity: 0.75
+      });
+      // ------------------------------------------消防栓-----------------------------------------------------
+		
+      //map要放在layer後面
+      var map = new Map({
+        basemap:"gray-vector",
+        layers: [kernel, building, facility, fire_EX, fire_HY]
+      });
+      
+      var view = new MapView({
+        container: "viewDiv",
+            map: map,
+        center: [120.216002,23.002530],
+        zoom: 17
+      });
+
+		  //LayerList: 控制圖層之元件
+      function controlActions(event) {
+        var item = event.item;
+      }
+
+
+      view.when(function() {
+        var layerList = new LayerList({
+          view: view,
+          listItemCreatedFunction: controlActions
+        });
+
+        const legend = new Legend({
+              view: view,
+              layerInfos: [
                 {
-                  title: "Go to full extent",
-                  className: "esri-icon-zoom-out-fixed",
-                  id: "full-extent"
+                  layer: facility,
+                  title: "防災設施"
                 },
                 {
-                  title: "Layer information",
-                  className: "esri-icon-description",
-                  id: "information"
+                  layer:building,
+                  title:"力行校區建物"
+                },
+                {
+                  layer:kernel,
+                  title:"核密度"
+                },
+                {
+                  layer:shelter_EX,
+                  title:"最鄰近滅火器路線"
+                },
+                {
+                  layer:shelter_HY,
+                  title:"最鄰近消防栓路線"
                 }
               ]
-            ];
-          }
-        }
-
-        view.when(function() {
-          var layerList = new LayerList({
+            });
+            legend.respectLayerVisibility = false;
+        
+          const legendExpand = new Expand({
+            expandIconClass:"esri-icon-legend",
+            expandTooltip: "圖例",
+            expanded: false,
             view: view,
-            listItemCreatedFunction: controlActions
+            content: legend
           });
 
-          layerList.on("trigger-action", function(event) {
-            
-            //**變數 = (條件式) ? { 成立 } : { 不成立 };
-			var visibleLayer = incampus.visible ? incampus : offcampus;
-            var id = event.action.id;
+        layerList.on("trigger-action", function(event) {
+        });
 
-            if (id === "full-extent") {
-              view.goTo(visibleLayer.fullExtent);
-            } else if (id === "information") {
-              window.open(visibleLayer.url);
-            } else if (id === "increase-opacity") {
-              if (ncku.opacity < 1) {
-                ncku.opacity += 0.25;
-              }
-            } else if (id === "decrease-opacity") {
-              if (ncku.opacity > 0) {
-                ncku.opacity -= 0.25;
-              }
-            }
-          });
-
-          // Add widget to the top right corner of the view
-          view.ui.add(layerList, "top-right");
-        });		
+        // Add widget to the top right corner of the view
+        view.ui.add(layerList, "top-right");
+        view.ui.add(legendExpand, "bottom-left");
+      });		
 						
 	  });
 	</script>
